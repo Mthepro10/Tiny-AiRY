@@ -1,0 +1,409 @@
+
+<!doctype html>
+<meta charset="utf-8">
+
+<style>
+  body {
+    margin: 20px auto;
+    max-width: 850px;
+    padding: 12px;
+    background: #07131d;
+    color: #e6edf3;
+    font: 14px system-ui;
+  }
+
+  textarea,
+  pre {
+    box-sizing: border-box;
+    width: 100%;
+    padding: 10px;
+    background: #041019;
+    color: inherit;
+    border: 1px solid #38556b;
+    border-radius: 7px;
+    font: 13px monospace;
+    white-space: pre-wrap;
+  }
+
+  textarea {
+    min-height: 145px;
+  }
+
+  #d {
+    min-height: 55px;
+  }
+
+  button {
+    padding: 7px 11px;
+    margin: 8px 5px 8px 0;
+    background: #183247;
+    color: white;
+    border: 1px solid #4d6b80;
+    border-radius: 7px;
+  }
+
+  small {
+    color: #a8b9c8;
+  }
+
+  .grid {
+    display: grid;
+    grid-template-columns: 1.6fr 1fr;
+    gap: 10px;
+  }
+
+  @media (max-width: 620px) {
+    .grid {
+      grid-template-columns: 1fr;
+    }
+  }
+</style>
+
+<canvas
+  id="cv"
+  width="400"
+  height="36"
+  style="max-width: 100%"
+></canvas>
+
+<script>
+  c = cv.getContext("2d");
+  c.fillStyle = "#07131d";
+  c.fillRect(0, 0, 400, 36);
+  c.fillStyle = "#62d9c4";
+  c.font = "bold 20px monospace";
+  c.fillText("AiRY Core", 8, 25);
+  c.strokeStyle = "#38556b";
+  c.beginPath();
+  c.moveTo(8, 31);
+  c.lineTo(392, 31);
+  c.stroke();
+</script>
+
+<div class="grid">
+  <section>
+    <label>AiRY source</label>
+
+    <textarea id="a">set s 0, loop i 0 5 { s = perform s + i * i }, show "sum: " + s, show s / 2.0, if s > 100 { show "big" } elseif s > 20 { show "mid" } else { show "small" }</textarea>
+
+    <button onclick="run()">Run</button>
+
+    <button onclick="a.value=sample;o.textContent='';d.value=''">
+      Example
+    </button>
+
+    <button onclick="o.textContent=''">Clear</button>
+
+    <label>Output</label>
+    <pre id="o"></pre>
+  </section>
+
+  <aside>
+    <label>Input for read</label>
+    <textarea id="d"></textarea>
+  </aside>
+</div>
+
+<script>
+  const sample = a.value;
+
+  K = /^(read|show|set|perform|if|elseif|else|loop|infloop|break|return|true|false)$/;
+
+  L = [
+    "||",
+    "&&",
+    "== !=",
+    "< > <= >=",
+    "|",
+    "^",
+    "&",
+    "+ -",
+    "* / %"
+  ];
+
+  N = v =>
+    typeof v == "boolean" ? BigInt(v) : v;
+
+  Q = v =>
+    typeof v == "number" ? v !== 0 :
+    typeof v == "string" ? v.length > 0 :
+    typeof v == "bigint" ? v !== 0n :
+    !!v;
+
+  D = v =>
+    typeof v == "number" && Object.is(v, -0)
+      ? "-0"
+      : ("" + v).replace("Infinity", "inf");
+
+  show = v =>
+    o.textContent += D(v) + "\n";
+
+  B = (o, a, b) => {
+    let s = typeof a == "string",
+        t = typeof b == "string";
+
+    if (o == "&&") return Q(a) && Q(b);
+
+    if (o == "||") return Q(a) || Q(b);
+
+    if (o == "+" && (s || t)) {
+      return D(a) + D(b);
+    }
+
+    if (o == "==" || o == "!=") {
+      return (s || t
+        ? s && t && a === b
+        : a == b) == (o == "==");
+    }
+
+    if (s || t) {
+      throw "cannot convert string to number";
+    }
+
+    a = N(a);
+    b = N(b);
+
+    typeof a != typeof b &&
+      (a = Number(a), b = Number(b));
+
+    if (o == "/" && typeof a == "bigint" && b == 0n) {
+      throw "zero dividing error";
+    }
+
+    if (o == "%" && typeof a == "bigint" && b == 0n) {
+      throw "remainder by zero";
+    }
+
+    return eval("a" + o + "b");
+  };
+
+  R = _ => {
+    let l = A.shift();
+
+    if (l == null) throw "stopped";
+
+    l = l.trim();
+
+    return /^[+-]?\d+$/.test(l) &&
+      BigInt(l) >= -(1n << 63n) &&
+      BigInt(l) <= (1n << 63n) - 1n
+        ? BigInt(l)
+        : l == "true" || l == "false"
+          ? l == "true"
+          : /^[+-]?(\d+\.?\d*|\.\d+)(e[+-]?\d+)?$/i.test(l) ||
+            /^[+-]?(inf|infinity|nan)$/i.test(l)
+              ? Number(l.replace(/inf(inity)?/i, "Infinity"))
+              : l;
+  };
+
+  g = _ => T[p++] || "";
+
+  dl = _ => {
+    for (; T[p] == "\n" || T[p] == ","; ) {
+      p++;
+    }
+  };
+
+  v = t => {
+    if (!/^[a-z_]/i.test(t) || K.test(t)) {
+      throw "name expected: " + t;
+    }
+
+    V.push("$" + t);
+    return "$" + t;
+  };
+
+  P = _ => {
+    let t = g(), e;
+
+    if (t == "(") {
+      e = E();
+
+      if (g() != ")") {
+        throw "expected )";
+      }
+
+      return "(" + e + ")";
+    }
+
+    if (t[1] && t[0] == '"') {
+      return JSON.stringify(t.slice(1, -1));
+    }
+
+    if (/^\d/.test(t)) {
+      return t.includes(".") ? +t : BigInt(t) + "n";
+    }
+
+    return t == "true" || t == "false"
+      ? t == "true"
+      : v(t);
+  };
+
+  U = _ => {
+    let t = T[p];
+
+    if (/^[-!~]$/.test(t)) {
+      p++;
+
+      return "(" +
+        t +
+        (t < "-" ? "" : "N") +
+        "(" + U() + "))";
+    }
+
+    return P();
+  };
+
+  X = l => {
+    if (l > 8) {
+      return U();
+    }
+
+    let x = X(l + 1);
+
+    for (; L[l].split(" ").includes(T[p]); ) {
+      x = "B('" +
+        T[p++] +
+        "'," +
+        x +
+        "," +
+        X(l + 1) +
+        ")";
+    }
+
+    return x;
+  };
+
+  E = _ =>
+    (T[p] == "perform" && p++, X(0));
+
+  Z = _ => {
+    if (g() != "{") {
+      throw "expected {";
+    }
+
+    let j = "{";
+
+    for (;;) {
+      dl();
+
+      if (T[p] == "}") {
+        p++;
+        break;
+      }
+
+      if (p >= T.length) {
+        throw "expected }";
+      }
+
+      j += S();
+    }
+
+    return j + "}";
+  };
+
+  S = _ => {
+    let t = g(), x, e;
+
+    if (t == "set") {
+      x = v(g());
+
+      return x + "=" +
+        (/^[\n,}]?$/.test(T[p] || "")
+          ? "false"
+          : E()) +
+        ";";
+    }
+
+    if (t == "read") {
+      return v(g()) + "=R();";
+    }
+
+    if (t == "show") {
+      return "show(" + E() + ");";
+    }
+
+    if (t == "break" || t == "return") {
+      return t + ";";
+    }
+
+    if (t == "infloop") {
+      return "while(Q(" + E() + "))" + Z();
+    }
+
+    if (t == "if") {
+      x = "if(Q(" + E() + "))" + Z();
+
+      for (;;) {
+        dl();
+
+        if (T[p] == "elseif") {
+          p++;
+          x += "else if(Q(" + E() + "))" + Z();
+        } else if (T[p] == "else") {
+          p++;
+          return x + "else" + Z();
+        } else {
+          return x;
+        }
+      }
+    }
+
+    if (t == "loop") {
+      x = v(g());
+      e = "e" + n++;
+      V.push(e);
+
+      return "for(" +
+        x + "=" + P() +
+        "," + e + "=" + P() +
+        ";" + x + "<" + e +
+        ";" + x + "++)" +
+        Z();
+    }
+
+    p--;
+    x = v(g());
+
+    if (g() != "=") {
+      throw "expected = after " + x;
+    }
+
+    return x + "=" + E() + ";";
+  };
+
+  run = _ => {
+    o.textContent = "";
+
+    try {
+      if ((a.value.match(/"/g) || []).length % 2) {
+        throw "Unterminated string literal";
+      }
+
+      T = a.value.match(
+        /"[^"]*"|\d+(\.\d*)?|\w+|[=!<>]=|&&|\|\||\n|\S/g
+      ) || [];
+
+      p = n = 0;
+      V = ["_"];
+
+      let j = "";
+
+      for (; dl(), p < T.length; ) {
+        j += S();
+      }
+
+      A = d.value.split(/\r?\n/);
+
+      Function(
+        "B",
+        "R",
+        "show",
+        "var " + V.map(x => x + "=0n") + ";" + j
+      )(B, R, show);
+
+    } catch (e) {
+      show("Error: " + (e.message || e));
+    }
+  };
+</script>
